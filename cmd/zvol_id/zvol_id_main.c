@@ -27,67 +27,91 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <linux/ioctl.h>
+#include <libzfs.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
-#include <sys/zfs_znode.h>
 #include <sys/fs/zfs.h>
 
-int ioctl_get_msg(char *var, int fd)
+static int
+zi_open_device(char *device, int *fd)
 {
-	int error = 0;
-	char msg[ZFS_MAXNAMELEN];
+	*fd = open(device, O_RDONLY);
+	if (*fd < 0)
+		return (errno);
 
-	error = ioctl(fd, BLKZNAME, msg);
-	if (error < 0) {
-		return (error);
-	}
-
-	snprintf(var, ZFS_MAXNAMELEN, "%s", msg);
-	return (error);
+	return (0);
 }
 
-int main(int argc, char **argv)
+static void
+zi_close_device(int fd)
 {
-	int fd, error = 0;
-	char zvol_name[ZFS_MAXNAMELEN], zvol_name_part[ZFS_MAXNAMELEN];
-	char *dev_name;
+	(void) close(fd);
+}
+
+static int
+zi_get_name(int fd, char **name)
+{
+	char ioctl_name[MAXNAMELEN];
 	struct stat64 statbuf;
-	int dev_minor, dev_part;
+	int partition;
+	int error;
+
+	error = ioctl(fd, BLKZNAME, ioctl_name);
+	if (error)
+		return (errno);
+
+	error = fstat64(fd, &statbuf);
+	if (error)
+		return (errno);
+
+	partition = minor(statbuf.st_rdev) % ZVOL_MINORS;
+	if (partition)
+		error = asprintf(name, "%s-part%d", ioctl_name, partition);
+	else
+		error = asprintf(name, "%s", ioctl_name);
+
+	if (error == -1)
+		return (ENOMEM);
+
+	return (0);
+}
+
+static void
+zi_put_name(char *name)
+{
+	free(name);
+}
+
+int
+main(int argc, char **argv)
+{
+	char *name;
+	int fd;
+	int error;
 
 	if (argc < 2) {
-		printf("Usage: %s /dev/zvol_device_node\n", argv[0]);
+		printf("Usage: %s /dev/zdN\n", argv[0]);
 		return (EINVAL);
 	}
 
-	dev_name = argv[1];
-	error = stat64(dev_name, &statbuf);
-	if (error != 0) {
-		printf("Unable to access device file: %s\n", dev_name);
-		return (errno);
+	error = zi_open_device(argv[1], &fd);
+	if (error) {
+		fprintf(stderr, "Unable to open device %s: %d\n",
+		    argv[1], error);
+		return (error);
 	}
 
-	dev_minor = minor(statbuf.st_rdev);
-	dev_part = dev_minor % ZVOL_MINORS;
-
-	fd = open(dev_name, O_RDONLY);
-	if (fd < 0) {
-		printf("Unable to open device file: %s\n", dev_name);
-		return (errno);
-	}
-
-	error = ioctl_get_msg(zvol_name, fd);
-	if (error < 0) {
-		printf("ioctl_get_msg failed:%s\n", strerror(errno));
-		return (errno);
-	}
-	if (dev_part > 0)
-		snprintf(zvol_name_part, ZFS_MAXNAMELEN, "%s-part%d", zvol_name,
-		    dev_part);
+	error = zi_get_name(fd, &name);
+	if (error)
+		fprintf(stderr, "Unable to get zvol name for %s: %d\n",
+		    argv[1], error);
 	else
-		snprintf(zvol_name_part, ZFS_MAXNAMELEN, "%s", zvol_name);
+		fprintf(stdout, "%s\n", name);
 
-	printf("%s\n", zvol_name_part);
-	close(fd);
+	zi_put_name(name);
+	zi_close_device(fd);
+
 	return (error);
 }
