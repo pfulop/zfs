@@ -530,7 +530,8 @@ static arc_buf_hdr_t arc_eviction_hdr;
 static void arc_get_data_buf(arc_buf_t *buf);
 static void arc_access(arc_buf_hdr_t *buf, kmutex_t *hash_lock);
 static int arc_evict_needed(arc_buf_contents_t type);
-static void arc_evict_ghost(arc_state_t *state, uint64_t spa, int64_t bytes);
+static void arc_evict_ghost(arc_state_t *state, uint64_t spa, int64_t bytes,
+    arc_buf_contents_t type);
 
 static boolean_t l2arc_write_eligible(uint64_t spa_guid, arc_buf_hdr_t *ab);
 
@@ -1790,12 +1791,14 @@ arc_evict(arc_state_t *state, uint64_t spa, int64_t bytes, boolean_t recycle,
 		if (mru_over > 0 && arc_mru_ghost->arcs_lsize[type] > 0) {
 			int64_t todelete =
 			    MIN(arc_mru_ghost->arcs_lsize[type], mru_over);
-			arc_evict_ghost(arc_mru_ghost, 0, todelete);
+			arc_evict_ghost(arc_mru_ghost, 0, todelete,
+			    ARC_BUFC_DATA);
 		} else if (arc_mfu_ghost->arcs_lsize[type] > 0) {
 			int64_t todelete = MIN(arc_mfu_ghost->arcs_lsize[type],
 			    arc_mru_ghost->arcs_size +
 			    arc_mfu_ghost->arcs_size - arc_c);
-			arc_evict_ghost(arc_mfu_ghost, 0, todelete);
+			arc_evict_ghost(arc_mfu_ghost, 0, todelete,
+			    ARC_BUFC_DATA);
 		}
 	}
 
@@ -1807,11 +1810,12 @@ arc_evict(arc_state_t *state, uint64_t spa, int64_t bytes, boolean_t recycle,
  * bytes.  Destroy the buffers that are removed.
  */
 static void
-arc_evict_ghost(arc_state_t *state, uint64_t spa, int64_t bytes)
+arc_evict_ghost(arc_state_t *state, uint64_t spa, int64_t bytes,
+    arc_buf_contents_t type)
 {
 	arc_buf_hdr_t *ab, *ab_prev;
 	arc_buf_hdr_t marker;
-	list_t *list = &state->arcs_list[ARC_BUFC_DATA];
+	list_t *list = &state->arcs_list[type];
 	kmutex_t *hash_lock;
 	uint64_t bytes_deleted = 0;
 	uint64_t bufs_skipped = 0;
@@ -1941,7 +1945,7 @@ arc_adjust(void)
 
 	if (adjustment > 0 && arc_mru_ghost->arcs_size > 0) {
 		delta = MIN(arc_mru_ghost->arcs_size, adjustment);
-		arc_evict_ghost(arc_mru_ghost, 0, delta);
+		arc_evict_ghost(arc_mru_ghost, 0, delta, ARC_BUFC_DATA);
 	}
 
 	adjustment =
@@ -1949,7 +1953,7 @@ arc_adjust(void)
 
 	if (adjustment > 0 && arc_mfu_ghost->arcs_size > 0) {
 		delta = MIN(arc_mfu_ghost->arcs_size, adjustment);
-		arc_evict_ghost(arc_mfu_ghost, 0, delta);
+		arc_evict_ghost(arc_mfu_ghost, 0, delta, ARC_BUFC_DATA);
 	}
 }
 
@@ -2018,15 +2022,16 @@ arc_do_user_evicts(void)
 	mutex_exit(&arc_eviction_mtx);
 }
 
-/*
- * Evict only meta data objects from the cache leaving the data objects.
- * This is only used to enforce the tunable arc_meta_limit, if we are
- * unable to evict enough buffers notify the user via the prune callback.
- */
 void
-arc_adjust_meta(int64_t adjustment, boolean_t may_prune)
+arc_adjust_meta(int64_t extra)
 {
-	int64_t delta;
+	int64_t adjustment, delta;
+
+	/*
+	 * Adjust MRU and MFU meta data including any extra requested space
+	 */
+
+	adjustment = MAX((int64_t)(arc_meta_used - arc_meta_limit), extra);
 
 	if (adjustment > 0 && arc_mru->arcs_lsize[ARC_BUFC_METADATA] > 0) {
 		delta = MIN(arc_mru->arcs_lsize[ARC_BUFC_METADATA], adjustment);
@@ -2037,12 +2042,26 @@ arc_adjust_meta(int64_t adjustment, boolean_t may_prune)
 	if (adjustment > 0 && arc_mfu->arcs_lsize[ARC_BUFC_METADATA] > 0) {
 		delta = MIN(arc_mfu->arcs_lsize[ARC_BUFC_METADATA], adjustment);
 		arc_evict(arc_mfu, 0, delta, FALSE, ARC_BUFC_METADATA);
+	}
+
+	/*
+	 * Adjust ghost lists
+	 */
+
+	adjustment = MAX((int64_t)(arc_meta_used - arc_meta_limit), extra);
+
+	delta = MIN(arc_mru_ghost->arcs_lsize[ARC_BUFC_METADATA], adjustment);
+	if (delta > 0) {
+		arc_evict_ghost(arc_mru_ghost, 0, delta, ARC_BUFC_METADATA);
 		adjustment -= delta;
 	}
 
-	if (may_prune && (adjustment > 0) && (arc_meta_used > arc_meta_limit))
-		arc_do_user_prune(arc_meta_prune);
+	delta = MIN(arc_mfu_ghost->arcs_lsize[ARC_BUFC_METADATA], adjustment);
+	if (delta > 0) {
+		arc_evict_ghost(arc_mfu_ghost, 0, delta, ARC_BUFC_METADATA);
+	}
 }
+
 
 /*
  * Flush all *evictable* data from the cache for the given spa.
@@ -2077,8 +2096,8 @@ arc_flush(spa_t *spa)
 			break;
 	}
 
-	arc_evict_ghost(arc_mru_ghost, guid, -1);
-	arc_evict_ghost(arc_mfu_ghost, guid, -1);
+	arc_evict_ghost(arc_mru_ghost, guid, -1, ARC_BUFC_DATA);
+	arc_evict_ghost(arc_mfu_ghost, guid, -1, ARC_BUFC_DATA);
 
 	mutex_enter(&arc_reclaim_thr_lock);
 	arc_do_user_evicts();
@@ -2154,7 +2173,6 @@ static void
 arc_adapt_thread(void)
 {
 	callb_cpr_t		cpr;
-	int64_t			prune;
 
 	CALLB_CPR_INIT(&cpr, &arc_reclaim_thr_lock, callb_generic_cpr, FTAG);
 
@@ -2189,16 +2207,11 @@ arc_adapt_thread(void)
 		if (arc_no_grow && ddi_get_lbolt() >= arc_grow_time)
 			arc_no_grow = FALSE;
 
-		/*
-		 * Keep meta data usage within limits, arc_shrink() is not
-		 * used to avoid collapsing the arc_c value when only the
-		 * arc_meta_limit is being exceeded.
-		 */
-		prune = (int64_t)arc_meta_used - (int64_t)arc_meta_limit;
-		if (prune > 0)
-			arc_adjust_meta(prune, B_TRUE);
-
 		arc_adjust();
+		arc_adjust_meta(0);
+
+		if (arc_meta_used > arc_meta_limit)
+			arc_do_user_prune(arc_meta_prune);
 
 		if (arc_eviction_list != NULL)
 			arc_do_user_evicts();
