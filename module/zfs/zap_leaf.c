@@ -457,9 +457,14 @@ zap_leaf_lookup_closest(zap_leaf_t *l,
 	for (lh = LEAF_HASH(l, h); lh <= bestlh; lh++) {
 		for (chunk = l->l_phys->l_hash[lh];
 		    chunk != CHAIN_END; chunk = le->le_next) {
-			le = ZAP_LEAF_ENTRY(l, chunk);
+			/*
+			 * Gracefully detect an incorrect chunk index before
+			 * using it to deference a random memory address.
+			 */
+			if (chunk >= ZAP_LEAF_NUMCHUNKS(l))
+				return (EFAULT);
 
-			ASSERT3U(chunk, <, ZAP_LEAF_NUMCHUNKS(l));
+			le = ZAP_LEAF_ENTRY(l, chunk);
 			ASSERT3U(le->le_type, ==, ZAP_CHUNK_ENTRY);
 
 			if (HCD_GTEQ(le->le_hash, le->le_cd, h, cd) &&
