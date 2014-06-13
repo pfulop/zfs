@@ -66,17 +66,32 @@ extern int zfs_free_leak_on_eio;
  */
 #if defined(_KERNEL)
 
-#include <spl-debug.h>
-#define	dprintf(...)                                                   \
-	if (zfs_flags & ZFS_DEBUG_DPRINTF)                             \
-		__SDEBUG(NULL, SS_USER1, SD_DPRINTF, __VA_ARGS__)
+#if defined(HAVE_DECLARE_EVENT_CLASS)
+#define	DPRINTF_BUF_SIZE 4096
+#define	dprintf(...)							\
+do {									\
+	if (zfs_flags & ZFS_DEBUG_DPRINTF) {				\
+		char *__buf = kmem_alloc(DPRINTF_BUF_SIZE, KM_PUSHPAGE);\
+		char *nl;						\
+									\
+		(void) snprintf(__buf, DPRINTF_BUF_SIZE, __VA_ARGS__);	\
+		nl = strrchr(__buf, '\n');				\
+		if (nl != NULL)						\
+			*nl = '\0';					\
+		trace_zfs_dprintf(__FILE__, __func__, __LINE__, __buf);	\
+		kmem_free(__buf, DPRINTF_BUF_SIZE);			\
+	}								\
+} while (0)
+#else
+#define	dprintf(fmt, ...) do { } while (0)
+#endif /* HAVE_DECLARE_EVENT_CLASS */
 
+#else
 /*
  * When zfs is running is user space the debugging is always enabled.
  * The messages will be printed using the __dprintf() function and
  * filtered based on the zfs_flags variable.
  */
-#else
 #define	dprintf(...)                                                   \
 	if (zfs_flags & ZFS_DEBUG_DPRINTF)                             \
 		__dprintf(__FILE__, __func__, __LINE__, __VA_ARGS__)

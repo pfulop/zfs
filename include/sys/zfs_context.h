@@ -66,6 +66,7 @@
 #include <sys/sunddi.h>
 #include <sys/ctype.h>
 #include <sys/disp.h>
+#include <sys/trace.h>
 #include <linux/dcache_compat.h>
 #include <linux/utsname_compat.h>
 
