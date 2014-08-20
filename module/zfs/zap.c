@@ -469,6 +469,11 @@ zap_open_leaf(uint64_t blkid, dmu_buf_t *db)
 		/* someone else set it first */
 		zap_leaf_pageout(NULL, l);
 		l = winner;
+
+#ifdef _KERNEL
+		printk("zap_open_leaf() l=%p owner=%d blkid=%llu\n",
+		    l, rw_owner(&l->l_rwlock)->pid, l->l_blkid);
+#endif
 	}
 
 	/*
@@ -503,6 +508,9 @@ zap_get_leaf_byblk(zap_t *zap, uint64_t blkid, dmu_tx_t *tx, krw_t lt,
 	zap_leaf_t *l;
 	int bs = FZAP_BLOCK_SHIFT(zap);
 	int err;
+#ifdef _KERNEL
+	int i = 1;
+#endif
 
 	ASSERT(RW_LOCK_HELD(&zap->zap_rwlock));
 
@@ -521,7 +529,18 @@ zap_get_leaf_byblk(zap_t *zap, uint64_t blkid, dmu_tx_t *tx, krw_t lt,
 	if (l == NULL)
 		l = zap_open_leaf(blkid, db);
 
+#ifdef _KERNEL
+	while (rw_tryenter(&l->l_rwlock, lt) == 0) {
+		if ((++i % 100000) == 0) {
+			printk("zap_get_leaf_byblk() l=%p owner=%d "
+			    "blkid=%llu\n", l, rw_owner(&l->l_rwlock)->pid,
+			    l->l_blkid);
+			return (EBUSY);
+		}
+	}
+#else
 	rw_enter(&l->l_rwlock, lt);
+#endif
 	/*
 	 * Must lock before dirtying, otherwise l->l_phys could change,
 	 * causing ASSERT below to fail.
