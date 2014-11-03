@@ -383,7 +383,7 @@ int
 zvol_check_volblocksize(uint64_t volblocksize)
 {
 	if (volblocksize < SPA_MINBLOCKSIZE ||
-	    volblocksize > SPA_MAXBLOCKSIZE ||
+	    volblocksize > SPA_OLD_MAXBLOCKSIZE ||
 	    !ISP2(volblocksize))
 		return (SET_ERROR(EDOM));
 
