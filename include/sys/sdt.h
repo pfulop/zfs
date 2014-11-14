@@ -29,11 +29,12 @@
 
 #ifndef _KERNEL
 
-#define	DTRACE_PROBE(a)					((void) 0)
-#define	DTRACE_PROBE1(a, b, c)				((void) 0)
-#define	DTRACE_PROBE2(a, b, c, d, e)			((void) 0)
-#define	DTRACE_PROBE3(a, b, c, d, e, f, g)		((void) 0)
-#define	DTRACE_PROBE4(a, b, c, d, e, f, g, h, i)	((void) 0)
+#define	ZFS_PROBE(a)			((void) 0)
+#define	ZFS_PROBE1(a, c)		((void) 0)
+#define	ZFS_PROBE2(a, c, e)		((void) 0)
+#define	ZFS_PROBE3(a, c, e, g)		((void) 0)
+#define	ZFS_PROBE4(a, c, e, g, i)	((void) 0)
+#define	ZFS_SET_ERROR(err)		((void) 0)
 
 #else
 
@@ -41,6 +42,19 @@
 
 #include <sys/trace.h>
 
+/*
+ * The set-error SDT probe is extra static, in that we declare its fake
+ * function literally, rather than with the DTRACE_PROBE1() macro.  This is
+ * necessary so that SET_ERROR() can evaluate to a value, which wouldn't
+ * be possible if it required multiple statements (to declare the function
+ * and then call it).
+ *
+ * SET_ERROR() uses the comma operator so that it can be used without much
+ * additional code.  For example, "return (EINVAL);" becomes
+ * "return (SET_ERROR(EINVAL));".  Note that the argument will be evaluated
+ * twice, so it should not have side effects (e.g. something like:
+ * "return (SET_ERROR(log_error(EINVAL, info)));" would log the error twice).
+ */
 #define	SET_ERROR(err) \
 	(trace_zfs_set__error(__FILE__, __func__, __LINE__, err), err)
 
