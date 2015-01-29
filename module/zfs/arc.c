@@ -2307,9 +2307,6 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat, uint64_t bytes)
 {
 	size_t			i;
 	kmem_cache_t		*prev_cache = NULL;
-	kmem_cache_t		*prev_data_cache = NULL;
-	extern kmem_cache_t	*zio_buf_cache[];
-	extern kmem_cache_t	*zio_data_buf_cache[];
 
 	/*
 	 * An aggressive reclamation will shrink the cache size as well as
@@ -2322,10 +2319,6 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat, uint64_t bytes)
 		if (zio_buf_cache[i] != prev_cache) {
 			prev_cache = zio_buf_cache[i];
 			kmem_cache_reap_now(zio_buf_cache[i]);
-		}
-		if (zio_data_buf_cache[i] != prev_data_cache) {
-			prev_data_cache = zio_data_buf_cache[i];
-			kmem_cache_reap_now(zio_data_buf_cache[i]);
 		}
 	}
 

@@ -250,6 +250,7 @@ enum zio_wait_type {
 typedef void zio_done_func_t(zio_t *zio);
 
 extern const char *zio_type_name[ZIO_TYPES];
+extern kmem_cache_t *zio_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 
 /*
  * A bookmark is a four-tuple <objset, object, level, blkid> that uniquely

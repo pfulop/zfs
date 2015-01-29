@@ -56,7 +56,6 @@ const char *zio_type_name[ZIO_TYPES] = {
 kmem_cache_t *zio_cache;
 kmem_cache_t *zio_link_cache;
 kmem_cache_t *zio_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
-kmem_cache_t *zio_data_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 int zio_bulk_flags = 0;
 int zio_delay_max = ZIO_DELAY_MAX;
 
@@ -125,7 +124,6 @@ void
 zio_init(void)
 {
 	size_t c;
-	vmem_t *data_alloc_arena = NULL;
 
 	zio_cache = kmem_cache_create("zio_cache", sizeof (zio_t), 0,
 	    zio_cons, zio_dest, NULL, NULL, NULL, 0);
@@ -169,11 +167,6 @@ zio_init(void)
 			(void) sprintf(name, "zio_buf_%lu", (ulong_t)size);
 			zio_buf_cache[c] = kmem_cache_create(name, size,
 			    align, NULL, NULL, NULL, NULL, NULL, flags);
-
-			(void) sprintf(name, "zio_data_buf_%lu", (ulong_t)size);
-			zio_data_buf_cache[c] = kmem_cache_create(name, size,
-			    align, NULL, NULL, NULL, NULL,
-			    data_alloc_arena, flags);
 		}
 	}
 
@@ -181,10 +174,6 @@ zio_init(void)
 		ASSERT(zio_buf_cache[c] != NULL);
 		if (zio_buf_cache[c - 1] == NULL)
 			zio_buf_cache[c - 1] = zio_buf_cache[c];
-
-		ASSERT(zio_data_buf_cache[c] != NULL);
-		if (zio_data_buf_cache[c - 1] == NULL)
-			zio_data_buf_cache[c - 1] = zio_data_buf_cache[c];
 	}
 
 	zio_inject_init();
@@ -197,7 +186,6 @@ zio_fini(void)
 {
 	size_t c;
 	kmem_cache_t *last_cache = NULL;
-	kmem_cache_t *last_data_cache = NULL;
 
 	for (c = 0; c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT; c++) {
 		if (zio_buf_cache[c] != last_cache) {
@@ -205,12 +193,6 @@ zio_fini(void)
 			kmem_cache_destroy(zio_buf_cache[c]);
 		}
 		zio_buf_cache[c] = NULL;
-
-		if (zio_data_buf_cache[c] != last_data_cache) {
-			last_data_cache = zio_data_buf_cache[c];
-			kmem_cache_destroy(zio_data_buf_cache[c]);
-		}
-		zio_data_buf_cache[c] = NULL;
 	}
 
 	kmem_cache_destroy(zio_link_cache);
@@ -248,15 +230,16 @@ zio_buf_alloc(size_t size)
  * crashdump if the kernel panics.  This exists so that we will limit the amount
  * of ZFS data that shows up in a kernel crashdump.  (Thus reducing the amount
  * of kernel heap dumped to disk when the kernel panics)
+ *
+ * Note that under Linux zio_data_buf_alloc() is mapped to zio_buf_alloc()
+ * because there is only a single global arena.  Consolidating these otherwise
+ * identical caches both simplifies the code and reduces slab fragmentation.
+ * However, the zio_data_buf_alloc() interface is kept for compatibility.
  */
 void *
 zio_data_buf_alloc(size_t size)
 {
-	size_t c = (size - 1) >> SPA_MINBLOCKSHIFT;
-
-	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
-
-	return (kmem_cache_alloc(zio_data_buf_cache[c], KM_PUSHPAGE));
+	return (zio_buf_alloc(size));
 }
 
 void
@@ -272,11 +255,7 @@ zio_buf_free(void *buf, size_t size)
 void
 zio_data_buf_free(void *buf, size_t size)
 {
-	size_t c = (size - 1) >> SPA_MINBLOCKSHIFT;
-
-	ASSERT(c < SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT);
-
-	kmem_cache_free(zio_data_buf_cache[c], buf);
+	zio_buf_free(buf, size);
 }
 
 /*
